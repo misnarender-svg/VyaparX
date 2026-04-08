@@ -5,6 +5,10 @@ const API_KEY = "NV26182155";
 // ==========================================
 // 1. GLOBAL HELPERS (Utility Functions)
 // ==========================================
+
+let EMI_INVOICES_CACHE = [];
+let EMI_SCHEDULE_CACHE = [];
+
 function isEmpty(v) { return v === null || v === undefined || String(v).trim() === ""; }
 
 function showError(msg) {
@@ -19,10 +23,36 @@ function showLoader(s) {
 }
 
 function formatDisplayDate(dateStr) {
-    if (!dateStr) return "-";
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+
+  if (!dateStr) return "-";
+
+  const d = new Date(dateStr);
+
+  if (isNaN(d.getTime())) return dateStr;
+
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
+  }).replace(/ /g, "-");
+
+}
+
+async function loadEmiData(){
+
+  if(EMI_INVOICES_CACHE.length && EMI_SCHEDULE_CACHE.length){
+    return;
+  }
+
+  const sheetId = localStorage.getItem("sheetId");
+
+  const [inv, sch] = await Promise.all([
+    fetch(`${SCRIPT_URL}?action=emiInvoices&sheetId=${sheetId}&key=${API_KEY}`).then(r=>r.json()),
+    fetch(`${SCRIPT_URL}?action=emiSchedule&sheetId=${sheetId}&key=${API_KEY}`).then(r=>r.json())
+  ]);
+
+  EMI_INVOICES_CACHE = inv;
+  EMI_SCHEDULE_CACHE = sch;
 }
 
 function safeGetStorage(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
@@ -231,7 +261,8 @@ async function saveInvoice() {
 
         window.open(data.pdfUrl, "_blank");
         resetInvoiceForm();
-        setTimeout(()=>location.reload(),800);
+        await initERP();
+        await fetchHistory();
 
     } catch (e) {
         console.error(e);
@@ -241,7 +272,6 @@ async function saveInvoice() {
 }
 
 async function fetchHistory() {
-    showLoader(true);
     try {
         const sheetId = localStorage.getItem("sheetId");
         if(!sheetId){
@@ -269,7 +299,6 @@ async function fetchHistory() {
         console.error(e); 
         alert("Failed to load invoice history");
     }
-    showLoader(false);
 }
 
 
@@ -291,12 +320,15 @@ async function deleteInvoice(id) {
     fd.append("sheetId", sheetId);
     fd.append("key", API_KEY);
 
-    await fetch(SCRIPT_URL, {
-      method: "POST",
-      body: fd
-    });
+    await fetch(SCRIPT_URL,{
+  method:"POST",
+  body:fd
+   });
 
-    fetchHistory();
+   await fetchHistory();
+
+   showLoader(false);
+
 }
 
 
@@ -304,20 +336,29 @@ async function deleteInvoice(id) {
 // 1. FETCH EMI RECORDS (Only Schedule Icon)
 // ==========================================
 async function fetchEmiRecords() {
-    showLoader(true);
     try {
         const sheetId = localStorage.getItem("sheetId");
 
-        const [invoices, schedule] = await Promise.all([
-          fetch(`${SCRIPT_URL}?action=emiInvoices&sheetId=${sheetId}&key=${API_KEY}`).then(r => r.json()),
-          fetch(`${SCRIPT_URL}?action=emiSchedule&sheetId=${sheetId}&key=${API_KEY}`).then(r => r.json())
-        ]);
+        let totalPendingCount = 0;
+        let totalPendingAmount = 0;
+
+       await loadEmiData();
+
+        const invoices = EMI_INVOICES_CACHE;
+        const schedule = EMI_SCHEDULE_CACHE;
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
         document.getElementById('emiRecordBody').innerHTML = invoices.reverse().map(inv => {
             const s = schedule.filter(x => String(x.InvoiceNo) === String(inv.InvoiceNo));
+            // 🔴 TOTAL PENDING CALCULATION
+            s.forEach(x => {
+                if (x.Status === "Pending") {
+                    totalPendingCount++;
+                    totalPendingAmount += Number(x.EMI_Amount) || 0;
+                }
+            });
             const pend = s.find(x => x.Status === "Pending");
             const isComplete = !pend && s.length > 0;
             
@@ -343,22 +384,22 @@ async function fetchEmiRecords() {
                 </td>
             </tr>`;
         }).join('');
+        document.getElementById("totalPendingCount").innerText = totalPendingCount;
+        document.getElementById("totalPendingAmount").innerText = totalPendingAmount.toFixed(2);
     } catch(e) { console.error(e); }
-    showLoader(false);
 }
 
 // ==========================================
 // 2. FETCH OVERDUE EMI (With Original Icons & Buttons)
 // ==========================================
 async function fetchOverdueEmi() {
-    showLoader(true);
     try {
         const sheetId = localStorage.getItem("sheetId");
 
-        const [invoices, schedule] = await Promise.all([
-          fetch(`${SCRIPT_URL}?action=emiInvoices&sheetId=${sheetId}&key=${API_KEY}`).then(r => r.json()),
-          fetch(`${SCRIPT_URL}?action=emiSchedule&sheetId=${sheetId}&key=${API_KEY}`).then(r => r.json())
-        ]);
+        await loadEmiData();
+
+        const invoices = EMI_INVOICES_CACHE;
+        const schedule = EMI_SCHEDULE_CACHE;
 
 
         const today = new Date();
@@ -433,7 +474,6 @@ async function fetchOverdueEmi() {
         }
 
     } catch (e) { console.error(e); }
-    showLoader(false);
 }
 
 // ==========================================
@@ -448,8 +488,8 @@ async function openSchedule(id, custName) {
     
     try {
         const sheetId = localStorage.getItem("sheetId");
-        const res = await fetch(`${SCRIPT_URL}?action=emiSchedule&sheetId=${sheetId}&key=${API_KEY}`);
-        const data = await res.json();
+        await loadEmiData();
+        const data = EMI_SCHEDULE_CACHE;
         const filtered = data.map((s, i) => ({...s, row: i+2})).filter(s => String(s.InvoiceNo) === String(id));
         
         tbody.innerHTML = filtered.map((s, index) => `
@@ -487,10 +527,11 @@ async function updateOverdueIndicator() {
     try {
         const sheetId = localStorage.getItem("sheetId");
 
-            const [invoices, schedule] = await Promise.all([
-             fetch(`${SCRIPT_URL}?action=emiInvoices&sheetId=${sheetId}&key=${API_KEY}`).then(r=>r.json()),
-             fetch(`${SCRIPT_URL}?action=emiSchedule&sheetId=${sheetId}&key=${API_KEY}`).then(r=>r.json())
-            ]);
+            await loadEmiData();
+
+            const invoices = EMI_INVOICES_CACHE;
+            const schedule = EMI_SCHEDULE_CACHE;
+
         const today = new Date(); today.setHours(0,0,0,0);
         let hasOverdue = false;
         invoices.forEach(inv => {
@@ -582,7 +623,11 @@ async function initERP(){
     addItemRow();
 
     // ✅ Overdue fetch after core UI ready
-    await fetchOverdueEmi();
+    await Promise.all([
+        fetchHistory(),
+        fetchEmiRecords(),
+        fetchOverdueEmi()
+    ]);
 
   }catch(e){
 
