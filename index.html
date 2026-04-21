@@ -44,21 +44,29 @@
     </div>
 
     <div id="loader" class="full-loader hidden">
-
-      <div class="loader">
-        <div class="loader__inner"></div>
-        <div class="loader__orbit">
-          <div class="loader__dot"></div>
-          <div class="loader__dot"></div>
-          <div class="loader__dot"></div>
-          <div class="loader__dot"></div>
+  
+        <div class="premium-loader">
+            <div class="circle">
+            <div class="dot"></div>
+            <div class="outline"></div>
+            </div>
+            <div class="circle">
+            <div class="dot"></div>
+            <div class="outline"></div>
+            </div>
+            <div class="circle">
+            <div class="dot"></div>
+            <div class="outline"></div>
+            </div>
+            <div class="circle">
+            <div class="dot"></div>
+            <div class="outline"></div>
+            </div>
         </div>
-      </div>
 
-      <p style="margin-top:20px;font-weight:600;color:white">Processing…</p>
+            <p id="loaderText" style="margin-top:20px;font-weight:600;color:white">Processing...</p>
 
     </div>
-
     <aside class="sidebar" id="mobileHeader">
         <div class="logo"></div>
         <div class="nav-item active" onclick="switchPage('invoice', this)">New Invoice</div>
